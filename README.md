@@ -6,6 +6,7 @@ Project Overview
 The UFC Fighter Comparer and Stat Tracker provides two prediction methods:
 
 Manual Comparison: Compare specific metrics between two fighters to predict the winner.
+
 Machine Learning Model: Use a Random Forest Classifier to predict the winner based on historical fight statistics.
 The project uses a dataset of aggregated UFC fighter statistics to perform these comparisons and predictions.
 
@@ -44,17 +45,9 @@ LEG_ratio
 DISTANCE_ratio
 CLINCH_ratio
 GROUND_ratio
-Running the Project
-Clone the repository:
 
-bash
-Copy code
-git clone https://github.com/your-username/UFC-Fighter-Comparer.git
-cd UFC-Fighter-Comparer
-Run the main script:
+**Running the Project**
 
-bash
-Copy code
 python ufc_fighter_comparer.py
 Follow the on-screen instructions to choose a prediction method, enter fighter names, and view the results.
 
@@ -74,15 +67,13 @@ UFC-Fighter-Comparer/
 ├── Aggregated_UFC_Fighter_Stats.csv   # Dataset file
 ├── ufc_fighter_comparer.py            # Main script
 └── README.md                          # Project documentation (you are here)
+
 Future Improvements
 Implement a graphical user interface (GUI) for enhanced user experience.
 Incorporate additional machine learning algorithms for comparison.
 Add data visualization to show fighter statistics.
 Contributing
 Contributions are welcome! Please feel free to submit issues or pull requests to improve the project.
-
-License
-This project is licensed under the MIT License. See the LICENSE file for more details.
 
 Acknowledgements
 This project uses a dataset compiled from UFC fighter statistics.
