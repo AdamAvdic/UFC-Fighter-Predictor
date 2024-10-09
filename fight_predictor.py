@@ -1,144 +1,167 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
+from sklearn.ensemble import GradientBoostingClassifier, StackingClassifier
+from xgboost import XGBClassifier
+from catboost import CatBoostClassifier
+from sklearn.impute import KNNImputer
 
-print("Welcome to my UFC fighter comparer and stat tracker")
+# Load and clean the dataset
+df = pd.read_csv('/Users/adamavdic/Desktop/UFC-fight-predictor/enhanced_fighter_stats.csv')
 
-# Load the dataset
-df = pd.read_csv('/Users/adamavdic/Desktop/UFC-fight-predictor/Aggregated_UFC_Fighter_Stats.csv')
+# Impute missing values using KNN Imputer for better imputations
+imputer = KNNImputer(n_neighbors=5)
+df[['win_loss_ratio']] = imputer.fit_transform(df[['win_loss_ratio']])
 
-# List of available metrics for comparison
-available_metrics = ['SIG_STR_ratio', 'SIG_STR_pct', 'TOTAL_STR_ratio', 'TD_ratio', 'TD_pct', 'SUB.ATT',
-                     'REV.', 'CTRL_seconds', 'HEAD_ratio', 'BODY_ratio', 'LEG_ratio', 'DISTANCE_ratio',
-                     'CLINCH_ratio', 'GROUND_ratio']
+# Drop any remaining rows with missing values across all relevant columns to ensure data consistency
+df.dropna(subset=['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND', 'win_loss_ratio'], inplace=True)
 
-# Function to predict the winner based on the selected metrics of two fighters
-# Function to predict the winner based on the selected metrics of two fighters
-def predict_winner(fighter1, fighter2, selected_metrics, aggregated_stats):
-    # Retrieve the stats for both fighters
-    stats1 = aggregated_stats[aggregated_stats['FIGHTER'] == fighter1]
-    stats2 = aggregated_stats[aggregated_stats['FIGHTER'] == fighter2]
-
-    # Check if both fighters are in the dataset
-    if stats1.empty or stats2.empty:
-        return f"One or both fighters ('{fighter1}', '{fighter2}') not found in the dataset."
-
-    # Extract the relevant statistics for comparison
-    stats1 = stats1.iloc[0]
-    stats2 = stats2.iloc[0]
-
-    # Initialize scores for each fighter
-    score1 = 0
-    score2 = 0
-
-    # Lists to keep track of categories where each fighter has an advantage
-    fighter1_advantages = []
-    fighter2_advantages = []
-
-    # Compare each selected metric and assign points to the fighter with better stats
-    for metric in selected_metrics:
-        if stats1[metric] > stats2[metric]:
-            score1 += 1
-            fighter1_advantages.append(metric)
-        elif stats2[metric] > stats1[metric]:
-            score2 += 1
-            fighter2_advantages.append(metric)
-
-    # Determine the winner based on the scores
-    if score1 > score2:
-        return f"{fighter1} is predicted to win based on the comparison of the selected metrics."
-    elif score2 > score1:
-        return f"{fighter2} is predicted to win based on the comparison of the selected metrics."
+# Categorize win-loss ratio into classes
+# "Low" < 0.4, "Medium" between 0.4 and 0.7, "High" > 0.7
+def categorize_win_loss_ratio(ratio):
+    if ratio < 0.4:
+        return 'Low'
+    elif 0.4 <= ratio <= 0.7:
+        return 'Medium'
     else:
-        # If the score is tied, list the categories where each fighter has the advantage
-        result_message = "The fight is too close to call based on the selected metrics. Here's the breakdown:\n"
-        result_message += f"{fighter1} has an advantage in: {', '.join(fighter1_advantages) if fighter1_advantages else 'None'}\n"
-        result_message += f"{fighter2} has an advantage in: {', '.join(fighter2_advantages) if fighter2_advantages else 'None'}\n"
-        return result_message
+        return 'High'
 
-# Function to predict the fight result using a machine learning model
-def ml_predict_winner(fighter1, fighter2, aggregated_stats):
-    # Prepare the dataset for ML prediction
-    features = available_metrics
-    X = aggregated_stats[features]
-    y = aggregated_stats['FIGHTER'].apply(lambda x: 1 if x == fighter1 else (0 if x == fighter2 else -1))
-    X = X[y != -1]
-    y = y[y != -1]
+df['win_loss_category'] = df['win_loss_ratio'].apply(categorize_win_loss_ratio)
 
-    # Split the data into training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+# Feature Engineering: Add interaction terms and create new features
+poly = PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)
+interaction_features = poly.fit_transform(df[['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND']])
+interaction_feature_names = poly.get_feature_names_out(['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND'])
+interaction_df = pd.DataFrame(interaction_features, columns=interaction_feature_names)
 
-    # Standardize the features for better model performance
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+# Adding new features that could impact win-loss ratio
+df['SIG_STR_TOTAL'] = df['SIG.STR.'] * df['TOTAL STR.']  # Corrected column names
+df['recent_win_rate'] = np.random.uniform(0.5, 1, size=len(df))  # Placeholder for actual recent win rate
 
-    # Train the Random Forest Classifier
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train_scaled, y_train)
+# Combine features
+X = pd.concat([df[['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND', 'SIG_STR_TOTAL', 'recent_win_rate']], interaction_df], axis=1)
+y = df['win_loss_category']
 
-    # Evaluate the model's performance on the test set
-    y_pred = model.predict(X_test_scaled)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"Model Accuracy: {accuracy * 100:.2f}%")
-    print("Classification Report:\n", classification_report(y_test, y_pred, zero_division=1))
+# Split the data into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Predict the fight result using the model
-    fighter1_stats = aggregated_stats[aggregated_stats['FIGHTER'] == fighter1][features]
-    fighter2_stats = aggregated_stats[aggregated_stats['FIGHTER'] == fighter2][features]
+# Standardize the features to improve model performance
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
 
-    # Combine the stats into a single feature vector and convert to DataFrame with appropriate column names
-    combined_stats = (fighter1_stats.values + fighter2_stats.values) / 2
-    combined_stats_df = pd.DataFrame(combined_stats, columns=features)
+# Define models for ensemble classification
+xgb_model = XGBClassifier(n_estimators=150, max_depth=5, learning_rate=0.01, subsample=0.6, colsample_bytree=1.0, random_state=42)
+catboost_model = CatBoostClassifier(iterations=150, learning_rate=0.05, depth=5, verbose=0)
+gbm_model = GradientBoostingClassifier(n_estimators=150, learning_rate=0.05, max_depth=5, random_state=42)
 
-    # Use the scaler to transform the combined stats and make a prediction
-    combined_stats_scaled = scaler.transform(combined_stats_df)
-    prediction = model.predict(combined_stats_scaled)
+# Ensemble - StackingClassifier
+stacked_model = StackingClassifier(estimators=[('xgb', xgb_model), ('catboost', catboost_model), ('gbm', gbm_model)], final_estimator=GradientBoostingClassifier())
 
-    return f"The ML model predicts {'Fighter 1' if prediction[0] == 1 else 'Fighter 2'} as the winner."
+# Train the stacked model
+stacked_model.fit(X_train_scaled, y_train)
 
-# Main menu to choose prediction method
-print("Choose a prediction method:")
-print("1. Manual comparison of specific metrics")
-print("2. Use Machine Learning model to predict the result")
-
+# Main menu to choose functionality
+print("Welcome to the UFC Fight Predictor!")
+print("Choose an option:")
+print("1. Predict win-loss category using Machine Learning model")
+print("2. Compare two fighters using rules-based comparison")
 choice = input("Enter your choice (1 or 2): ")
 
 if choice == '1':
-    # Get user input for fighter names
-    fighter1 = input("Enter the name of the first fighter: ")
-    fighter2 = input("Enter the name of the second fighter: ")
+    # Predict win-loss category for a fighter using the model
+    fighter_name = input("Enter the name of the fighter to predict the win-loss category: ")
 
-    # Display available metrics to the user
-    print("Available metrics for comparison:")
-    print(", ".join(available_metrics))
-    print("Type 'All stats' to use all metrics for prediction.")
+    def predict_win_loss_category_from_csv(fighter_name, df):
+        # Check if the fighter exists in the dataset
+        if fighter_name not in df['FIGHTER'].values:
+            return f"Fighter {fighter_name} not found in the dataset."
 
-    # Get user input for the metrics they want to use for prediction
-    selected_metrics_input = input("Enter the metrics you want to use for comparison, separated by commas (or type 'All stats'): ")
+        # Retrieve the fighter's stats from the dataset
+        fighter_stats = df[df['FIGHTER'] == fighter_name][['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND']].values[0]
 
-    # Check if the user chose to use all metrics or specific ones
-    if selected_metrics_input.lower() == 'all stats':
-        selected_metrics = available_metrics  # Use all metrics
-    else:
-        selected_metrics = [metric.strip() for metric in selected_metrics_input.split(',') if metric.strip() in available_metrics]
+        # Add interaction features for the fighter's stats
+        interaction_stats = poly.transform([fighter_stats])[0]
 
-    # Check if any valid metrics were selected
-    if not selected_metrics:
-        print("No valid metrics selected. Please choose from the available metrics.")
-    else:
-        # Call the function with user input and print the result
-        print(predict_winner(fighter1, fighter2, selected_metrics, df))
+        # Combine original stats with the interaction features and add new features like SIG_STR_TOTAL and recent_win_rate
+        sig_str_total = df[df['FIGHTER'] == fighter_name]['SIG.STR.'].values[0] * df[df['FIGHTER'] == fighter_name]['TOTAL STR.'].values[0]
+        recent_win_rate = np.random.uniform(0.5, 1)  # Placeholder for actual recent win rate if available
+
+        # Create the final feature vector
+        fighter_stats_combined = np.concatenate((fighter_stats, [sig_str_total, recent_win_rate], interaction_stats))
+
+        # Scale the fighter's stats using the same scaler as the model
+        fighter_stats_scaled = scaler.transform([fighter_stats_combined])
+        
+        # Predict the win-loss category using the trained model
+        predicted_category = stacked_model.predict(fighter_stats_scaled)
+        return f"Predicted win-loss category for {fighter_name}: {predicted_category[0]}"
+
+    # Predict the win-loss category for the selected fighter using stats from the CSV
+    predicted_category = predict_win_loss_category_from_csv(fighter_name, df)
+    print(predicted_category)
 
 elif choice == '2':
-    # Get user input for fighter names
+    # Compare two fighters using the rules-based approach
     fighter1 = input("Enter the name of the first fighter: ")
     fighter2 = input("Enter the name of the second fighter: ")
 
-    # Call the ML function and print the result
-    print(ml_predict_winner(fighter1, fighter2, df))
+    # Function to compare two fighters using the aggregated statistics provided
+    def rules_based_comparison_aggregated(fighter1, fighter2, aggregated_stats):
+        # Retrieve aggregated stats for each fighter
+        remaining_features = ['TD', 'BODY', 'LEG', 'CLINCH', 'GROUND', 'win_loss_ratio']
+        fighter1_stats = aggregated_stats[aggregated_stats['FIGHTER'] == fighter1][remaining_features].mean()
+        fighter2_stats = aggregated_stats[aggregated_stats['FIGHTER'] == fighter2][remaining_features].mean()
 
-else:
-    print("Invalid choice. Please enter either 1 or 2.")
+        # Ensure there is data for both fighters
+        if fighter1_stats.empty or fighter2_stats.empty:
+            return "One or both fighters not found in the dataset."
+
+        # Initialize scores for each fighter
+        fighter1_score = 0
+        fighter2_score = 0
+
+        # List to keep track of the categories where each fighter has an advantage
+        fighter1_advantages = []
+        fighter2_advantages = []
+
+        # Detailed results string to show all metric comparisons
+        result_details = f"Comparison of aggregated metrics for {fighter1} and {fighter2}:\n"
+
+        # Compare each metric, display the values, and determine which fighter has the advantage
+        for metric in remaining_features:
+            result_details += f"{metric}: {fighter1} = {fighter1_stats[metric]:.4f}, {fighter2} = {fighter2_stats[metric]:.4f} -> "
+
+            if fighter1_stats[metric] > fighter2_stats[metric]:
+                fighter1_score += 1
+                fighter1_advantages.append(metric)
+                result_details += f"{fighter1} has the advantage\n"
+            elif fighter2_stats[metric] > fighter1_stats[metric]:
+                fighter2_score += 1
+                fighter2_advantages.append(metric)
+                result_details += f"{fighter2} has the advantage\n"
+            else:
+                result_details += "No advantage\n"
+
+        # Determine the winner based on the scores
+        if fighter1_score > fighter2_score:
+            result = f"{fighter1} is predicted to win based on the comparison of the key metrics."
+        elif fighter2_score > fighter1_score:
+            result = f"{fighter2} is predicted to win based on the comparison of the key metrics."
+        else:
+            result = "The fight is too close to call based on the selected metrics."
+
+        # Add details about the advantages each fighter has
+        result += f"\n\n{fighter1} has an advantage in: {', '.join(fighter1_advantages) if fighter1_advantages else 'None'}"
+        result += f"\n{fighter2} has an advantage in: {', '.join(fighter2_advantages) if fighter2_advantages else 'None'}"
+
+        return result_details + "\n" + result
+
+    # Run the rules-based comparison with the aggregated statistics for the selected fighters
+    aggregated_result = rules_based_comparison_aggregated(fighter1, fighter2, df)
+
+    # Display the full result of the rules-based comparison using aggregated statistics
+    print(aggregated_result)
+    
